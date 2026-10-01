@@ -1,0 +1,73 @@
+name: GHAV AionUi 1872 complete code quality checks human
+
+on:
+  push:
+    branches:
+      - codex/ghav-aionui1872-codequality-human
+
+permissions:
+  contents: read
+
+env:
+  BUN_INSTALL_REGISTRY: 'https://registry.npmjs.org/'
+
+jobs:
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fixed historical task source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: archidoge0/AionUi
+          ref: dfd3be1d1c24757f2c90fae92beb163cbd8a26fd
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve fixed PR context and assert input
+        run: |
+          test "$(git rev-parse HEAD)" = 'dfd3be1d1c24757f2c90fae92beb163cbd8a26fd'
+          test "$(git rev-parse HEAD^{tree})" = 'bce00a43cf1d911daaf02b006426033c4f3e90e3'
+          git cat-file -e 802e3d088a0a74554517586fefffcf446abdf894^{commit}
+          test "$(git rev-parse 802e3d088a0a74554517586fefffcf446abdf894^{tree})" = 'cad77417a048ab7eb9460ee8303c7c22576c5b9f'
+          git update-ref refs/remotes/origin/ghav-fixed-base 802e3d088a0a74554517586fefffcf446abdf894
+          echo "PR_BASE_REF=ghav-fixed-base" >> "$GITHUB_ENV"
+          echo "GHAV_SOURCE_SHA=$(git rev-parse HEAD)"
+          echo "GHAV_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          echo "GHAV_BASE_SHA=$(git rev-parse origin/ghav-fixed-base)"
+          echo "GHAV_BASE_TREE=$(git rev-parse origin/ghav-fixed-base^{tree})"
+          git diff --name-only origin/ghav-fixed-base HEAD > /tmp/ghav-changed-files.txt
+          echo "GHAV_CHANGED_COUNT=$(wc -l < /tmp/ghav-changed-files.txt | tr -d ' ')"
+          echo "GHAV_CHANGED_SHA=$(sha256sum /tmp/ghav-changed-files.txt | cut -d' ' -f1)"
+          test -s /tmp/ghav-changed-files.txt
+          test -s bun.lock
+          echo "GHAV_INPUT_LOCK=$(sha256sum bun.lock | cut -d' ' -f1)"
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.3'
+      - name: Setup bun
+        id: bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+          cache: true
+      - name: Install dependencies
+        run: bun install --no-frozen-lockfile
+      - name: Run postinstall
+        run: npm run postinstall || true
+      - name: Install prek
+        run: npm install -g @j178/prek@0.5.4
+      - name: Run prek checks
+        run: prek run --from-ref origin/${{ env.PR_BASE_REF }} --to-ref HEAD
+      - name: Record complete quality output witnesses
+        if: always()
+        run: |
+          echo "GHAV_NODE_VERSION=$(node --version)"
+          echo "GHAV_BUN_VERSION=$(bun --version)"
+          echo "GHAV_PREK_VERSION=$(prek --version)"
+          echo "GHAV_BUN_CACHE_HIT=${{ steps.bun.outputs.cache-hit }}"
+          echo "GHAV_FINAL_LOCK=$(sha256sum bun.lock | cut -d' ' -f1)"
+          git diff --name-only > /tmp/ghav-worktree-diff.txt
+          echo "GHAV_WORKTREE_CHANGED_COUNT=$(wc -l < /tmp/ghav-worktree-diff.txt | tr -d ' ')"
+          echo "GHAV_WORKTREE_CHANGED_SHA=$(sha256sum /tmp/ghav-worktree-diff.txt | cut -d' ' -f1)"
