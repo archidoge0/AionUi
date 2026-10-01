@@ -1,0 +1,116 @@
+name: GHAV AionUi 1872 complete coverage checks human
+
+on:
+  push:
+    branches:
+      - codex/ghav-aionui1872-coverage-human
+
+permissions:
+  contents: read
+
+env:
+  BUN_INSTALL_REGISTRY: 'https://registry.npmjs.org/'
+
+jobs:
+  coverage-tests:
+    name: Coverage Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fixed historical task source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: archidoge0/AionUi
+          ref: dfd3be1d1c24757f2c90fae92beb163cbd8a26fd
+          persist-credentials: false
+      - name: Assert fixed source and input files
+        run: |
+          test "$(git rev-parse HEAD)" = 'dfd3be1d1c24757f2c90fae92beb163cbd8a26fd'
+          test "$(git rev-parse HEAD^{tree})" = 'bce00a43cf1d911daaf02b006426033c4f3e90e3'
+          test -s bun.lock
+          echo "GHAV_SOURCE_SHA=$(git rev-parse HEAD)"
+          echo "GHAV_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          echo "GHAV_INPUT_LOCK=$(sha256sum bun.lock | cut -d' ' -f1)"
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.3'
+      - name: Setup bun
+        id: bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
+          cache: true
+      - name: Install dependencies
+        run: bun install --no-frozen-lockfile
+      - name: Run postinstall
+        run: npm run postinstall || true
+      - name: Run coverage tests
+        id: coverage
+        continue-on-error: true
+        run: bun run test:coverage
+      - name: Upload coverage to Codecov (Linux coverage only)
+        if: always() && hashFiles('coverage/lcov.info') != '' && github.repository == 'iOfficeAI/AionUi'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ secrets.CODECOV_TOKEN == '' }}
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+      - name: Skip Codecov upload when preconditions are not met
+        if: always() && hashFiles('coverage/lcov.info') != '' && github.repository != 'iOfficeAI/AionUi'
+        shell: bash
+        run: |
+          echo 'Skipping Codecov upload due to unmet preconditions.'
+          echo "Repository: ${{ github.repository }}"
+      - name: Coverage result summary
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.coverage.outcome }}" = "failure" ]; then
+            echo "::warning::Coverage tests failed (non-blocking). Check logs for failed test details."
+            echo "## Coverage check (non-blocking warning)" >> $GITHUB_STEP_SUMMARY
+            echo "Coverage command failed in this run. Please review test failures in logs." >> $GITHUB_STEP_SUMMARY
+            if [ -f coverage/lcov.info ]; then
+              echo "lcov.info exists, Codecov upload can still run." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "lcov.info not found, Codecov upload was skipped." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "## Coverage check" >> $GITHUB_STEP_SUMMARY
+            echo "Coverage command passed." >> $GITHUB_STEP_SUMMARY
+            if [ -f coverage/lcov.info ]; then
+              echo "Uploaded Linux (ubuntu-latest) coverage to Codecov." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Coverage passed but lcov.info is missing; Codecov upload was skipped." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          echo "GHAV_SUMMARY_SHA=$(sha256sum "$GITHUB_STEP_SUMMARY" | cut -d' ' -f1)"
+      - name: Upload coverage artifacts
+        if: always() && hashFiles('coverage/lcov.info') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+      - name: Record complete coverage output witnesses
+        if: always()
+        run: |
+          echo "GHAV_NODE_VERSION=$(node --version)"
+          echo "GHAV_BUN_VERSION=$(bun --version)"
+          echo "GHAV_BUN_CACHE_HIT=${{ steps.bun.outputs.cache-hit }}"
+          echo "GHAV_COVERAGE_OUTCOME=${{ steps.coverage.outcome }}"
+          echo "GHAV_FINAL_LOCK=$(sha256sum bun.lock | cut -d' ' -f1)"
+          if [ -f coverage/lcov.info ]; then
+            echo "GHAV_LCOV_SHA=$(sha256sum coverage/lcov.info | cut -d' ' -f1)"
+            python3 - <<'PY_COVERAGE'
+          import hashlib
+          from pathlib import Path
+          files=sorted((p for p in Path('coverage').rglob('*') if p.is_file()),key=lambda p:p.as_posix())
+          h=hashlib.sha256()
+          for p in files:h.update(p.as_posix().encode()+b'\0'+p.read_bytes()+b'\0')
+          print('GHAV_COVERAGE_FILE_COUNT='+str(len(files)))
+          print('GHAV_COVERAGE_TREE_SHA='+h.hexdigest())
+          PY_COVERAGE
+          fi
