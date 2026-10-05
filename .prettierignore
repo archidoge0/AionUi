@@ -16,3 +16,5 @@ resources/
 docs/
 config/webpack/
 scripts/
+# ghav harness files
+.github/workflows/ghav-*.yml
